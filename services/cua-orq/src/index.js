@@ -12,11 +12,12 @@ app.use(express.json());
 
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// URLs de servicios internos
+// URLs de servicios internos (consolidated: adp-gateway serves BUK+SAP+AzureAD)
 const SRV_CONTRATACION_URL = process.env.SRV_CONTRATACION_URL || 'http://srv-contratacion:3002';
-const ADP_BUK_URL = process.env.ADP_BUK_URL || 'http://adp-buk:3005';
-const ADP_SAP_URL = process.env.ADP_SAP_URL || 'http://adp-sap:3006';
-const ADP_AZUREAD_URL = process.env.ADP_AZUREAD_URL || 'http://adp-azuread:3007';
+const ADP_GATEWAY_URL = process.env.ADP_GATEWAY_URL || process.env.ADP_BUK_URL || 'http://adp-gateway:3005';
+const ADP_BUK_URL = ADP_GATEWAY_URL;
+const ADP_SAP_URL = ADP_GATEWAY_URL;
+const ADP_AZUREAD_URL = ADP_GATEWAY_URL;
 
 // ============================================================
 // FSM: Definición de estados y transiciones válidas

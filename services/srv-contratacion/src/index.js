@@ -149,6 +149,33 @@ app.put('/api/contrataciones/:id', async (req, res) => {
   }
 });
 
+// --- Reportes (consolidado de srv-reportes) ---
+app.get('/api/reportes/historico', async (req, res) => {
+  try {
+    const { estado_clinica, tipo_solicitud } = req.query;
+    let query = 'SELECT * FROM reportes.v_historico WHERE 1=1';
+    const params = [];
+    if (estado_clinica) { params.push(estado_clinica); query += ` AND estado_clinica = $${params.length}`; }
+    if (tipo_solicitud) { params.push(tipo_solicitud); query += ` AND tipo_solicitud = $${params.length}`; }
+    query += ' ORDER BY created_at DESC';
+    const result = await pool.query(query, params);
+    res.json({ total: result.rows.length, data: result.rows });
+  } catch (err) {
+    console.error('Error obteniendo historico:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+app.post('/api/reportes/refresh', async (_req, res) => {
+  try {
+    await pool.query('REFRESH MATERIALIZED VIEW CONCURRENTLY reportes.v_historico');
+    res.json({ status: 'ok', message: 'Vista materializada actualizada', timestamp: new Date().toISOString() });
+  } catch (err) {
+    console.error('Error refrescando vista:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 app.listen(PORT, () => {
-  console.log(`srv-contratacion running on port ${PORT}`);
+  console.log(`srv-contratacion running on port ${PORT} (includes reportes)`);
 });

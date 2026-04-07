@@ -1,14 +1,20 @@
 // Proxy API route - replaces Kong for Railway deployment
 // Routes /api/X to the corresponding backend service via private networking
 
+// Consolidated for Railway Trial (5 services + PostgreSQL)
+// srv-contratacion also serves /api/reportes
+// adp-gateway serves /api/buk, /api/sap, /api/azure-ad
+const SRV_CONTRATACION = process.env.SRV_CONTRATACION_URL || 'http://localhost:3002';
+const ADP_GATEWAY = process.env.ADP_GATEWAY_URL || 'http://localhost:3005';
+
 const SERVICE_MAP = {
   'workflow': process.env.CUA_ORQ_URL || 'http://localhost:3001',
-  'contrataciones': process.env.SRV_CONTRATACION_URL || 'http://localhost:3002',
+  'contrataciones': SRV_CONTRATACION,
   'auth': process.env.SRV_USUARIOS_URL || 'http://localhost:3003',
-  'reportes': process.env.SRV_REPORTES_URL || 'http://localhost:3004',
-  'buk': process.env.ADP_BUK_URL || 'http://localhost:3005',
-  'sap': process.env.ADP_SAP_URL || 'http://localhost:3006',
-  'azure-ad': process.env.ADP_AZUREAD_URL || 'http://localhost:3007',
+  'reportes': SRV_CONTRATACION,
+  'buk': ADP_GATEWAY,
+  'sap': ADP_GATEWAY,
+  'azure-ad': ADP_GATEWAY,
 };
 
 function getBackendUrl(path) {
