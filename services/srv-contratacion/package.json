@@ -1,0 +1,16 @@
+{
+  "name": "srv-contratacion",
+  "version": "1.0.0",
+  "description": "CRUD Contrataciones Service",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "cors": "^2.8.5",
+    "dotenv": "^16.4.5",
+    "express": "^4.21.0",
+    "pg": "^8.13.0",
+    "uuid": "^10.0.0"
+  }
+}

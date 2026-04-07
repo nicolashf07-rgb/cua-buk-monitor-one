@@ -1,0 +1,66 @@
+_format_version: "3.0"
+
+services:
+  - name: cua-orq
+    url: http://cua-orq:3001
+    routes:
+      - name: orq-routes
+        paths:
+          - /api/workflow
+        strip_path: false
+
+  - name: srv-contratacion
+    url: http://srv-contratacion:3002
+    routes:
+      - name: contratacion-routes
+        paths:
+          - /api/contrataciones
+        strip_path: false
+
+  - name: srv-usuarios
+    url: http://srv-usuarios:3003
+    routes:
+      - name: auth-routes
+        paths:
+          - /api/auth
+        strip_path: false
+
+  - name: srv-reportes
+    url: http://srv-reportes:3004
+    routes:
+      - name: reportes-routes
+        paths:
+          - /api/reportes
+        strip_path: false
+
+  - name: adp-buk
+    url: http://adp-buk:3005
+    routes:
+      - name: buk-routes
+        paths:
+          - /api/buk
+        strip_path: false
+
+  - name: adp-sap
+    url: http://adp-sap:3006
+    routes:
+      - name: sap-routes
+        paths:
+          - /api/sap
+        strip_path: false
+
+  - name: adp-azuread
+    url: http://adp-azuread:3007
+    routes:
+      - name: azuread-routes
+        paths:
+          - /api/azure-ad
+        strip_path: false
+
+  - name: cua-page
+    url: http://cua-page:3000
+    routes:
+      - name: frontend-routes
+        paths:
+          - /
+        strip_path: false
