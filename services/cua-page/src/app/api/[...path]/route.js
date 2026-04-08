@@ -10,7 +10,7 @@ const ADP_GATEWAY = process.env.ADP_GATEWAY_URL || 'http://localhost:3005';
 const SERVICE_MAP = {
   'workflow': process.env.CUA_ORQ_URL || 'http://localhost:3001',
   'contrataciones': SRV_CONTRATACION,
-  'auth': process.env.SRV_USUARIOS_URL || 'http://localhost:3003',
+  'auth': SRV_CONTRATACION,
   'reportes': SRV_CONTRATACION,
   'buk': ADP_GATEWAY,
   'sap': ADP_GATEWAY,
