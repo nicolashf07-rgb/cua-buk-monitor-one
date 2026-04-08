@@ -230,6 +230,15 @@ app.get('/api/auth/me', async (req, res) => {
   }
 });
 
-app.listen(PORT, () => {
-  console.log(`srv-contratacion running on port ${PORT} (includes reportes + auth)`);
+// Run migration on startup, then start server
+const { migrate } = require('./migrate');
+migrate().then(() => {
+  app.listen(PORT, () => {
+    console.log(`srv-contratacion running on port ${PORT} (includes reportes + auth)`);
+  });
+}).catch((err) => {
+  console.error('Migration failed, starting anyway:', err.message);
+  app.listen(PORT, () => {
+    console.log(`srv-contratacion running on port ${PORT} (migration failed)`);
+  });
 });
