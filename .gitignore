@@ -1,5 +1,8 @@
 node_modules/
 .next/
 .env
+.env.production
+.env.staging
 *.pdf
 .DS_Store
+.railway/

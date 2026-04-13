@@ -1,14 +1,17 @@
 {
   "name": "adp-azuread",
-  "version": "1.0.0",
-  "description": "Azure AD Adapter (Mock)",
+  "version": "2.0.0",
+  "description": "Azure AD Adapter - Mock + Real Mode with MSAL, Graph API, circuit breaker",
   "main": "src/index.js",
   "scripts": {
     "start": "node src/index.js"
   },
   "dependencies": {
+    "axios": "^1.7.0",
+    "axios-retry": "^4.4.0",
     "cors": "^2.8.5",
     "dotenv": "^16.4.5",
-    "express": "^4.21.0"
+    "express": "^4.21.0",
+    "opossum": "^8.1.0"
   }
 }

@@ -1,23 +1,45 @@
 require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
+const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { Pool } = require('pg');
 
 const app = express();
 const PORT = process.env.PORT || 3001;
+const JWT_SECRET = process.env.JWT_SECRET || 'cua-buk-secret-dev';
 
 app.use(cors());
 app.use(express.json());
 
+// ============================================================
+// Middleware: JWT Authentication
+// ============================================================
+function authMiddleware(req, res, next) {
+  const authHeader = req.headers.authorization;
+  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+    return res.status(401).json({ error: 'Token no proporcionado', hint: 'POST /api/auth/login para obtener token' });
+  }
+  try {
+    const token = authHeader.split(' ')[1];
+    const decoded = jwt.verify(token, JWT_SECRET);
+    req.user = decoded; // { userId, email, roles }
+    next();
+  } catch (err) {
+    if (err.name === 'TokenExpiredError') {
+      return res.status(401).json({ error: 'Token expirado', hint: 'POST /api/auth/login para renovar' });
+    }
+    return res.status(401).json({ error: 'Token inválido' });
+  }
+}
+
 const pool = new Pool({ connectionString: process.env.DATABASE_URL });
 
-// URLs de servicios internos (consolidated: adp-gateway serves BUK+SAP+AzureAD)
+// URLs de servicios internos
 const SRV_CONTRATACION_URL = process.env.SRV_CONTRATACION_URL || 'http://srv-contratacion:3002';
-const ADP_GATEWAY_URL = process.env.ADP_GATEWAY_URL || process.env.ADP_BUK_URL || 'http://adp-gateway:3005';
-const ADP_BUK_URL = ADP_GATEWAY_URL;
-const ADP_SAP_URL = ADP_GATEWAY_URL;
-const ADP_AZUREAD_URL = ADP_GATEWAY_URL;
+const ADP_BUK_URL = process.env.ADP_BUK_URL || 'http://adp-buk:3005';
+const ADP_SAP_URL = process.env.ADP_SAP_URL || 'http://adp-sap:3006';
+const ADP_AZUREAD_URL = process.env.ADP_AZUREAD_URL || 'http://adp-azuread:3007';
 
 // ============================================================
 // FSM: Definición de estados y transiciones válidas
@@ -152,8 +174,8 @@ app.get('/health', async (_req, res) => {
   }
 });
 
-// --- Iniciar workflow ---
-app.post('/api/workflow/iniciar', async (req, res) => {
+// --- Iniciar workflow (requiere auth) ---
+app.post('/api/workflow/iniciar', authMiddleware, async (req, res) => {
   try {
     const { tipo_solicitud, contratacion_id, nombre, apellido1, apellido2, rut, cargo_rrhh } = req.body;
 
@@ -186,11 +208,11 @@ app.post('/api/workflow/iniciar', async (req, res) => {
     // Log creación
     await logTransition(wf.id, null, 'CREADO', 'INICIAR', req.body, null, null, 0);
 
-    // Auditoría
+    // Auditoría (registra quién inició)
     await pool.query(
-      `INSERT INTO contratacion.auditoria_workflow (contratacion_id, paso_wf, detalle, estado_nuevo)
-       VALUES ($1, 'Workflow Iniciado', $2, 'CREADO')`,
-      [ctId, `Tipo: ${tipo_solicitud}`]
+      `INSERT INTO contratacion.auditoria_workflow (contratacion_id, paso_wf, usuario_ejecutor, detalle, estado_nuevo)
+       VALUES ($1, 'Workflow Iniciado', $2, $3, 'CREADO')`,
+      [ctId, req.user.email, `Tipo: ${tipo_solicitud}`]
     );
 
     res.status(201).json({
@@ -206,8 +228,8 @@ app.post('/api/workflow/iniciar', async (req, res) => {
   }
 });
 
-// --- Transicionar workflow ---
-app.post('/api/workflow/:id/transicionar', async (req, res) => {
+// --- Transicionar workflow (requiere auth) ---
+app.post('/api/workflow/:id/transicionar', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
     const { transicion, datos } = req.body;
@@ -257,11 +279,11 @@ app.post('/api/workflow/:id/transicionar', async (req, res) => {
     await logTransition(id, estadoAnterior, estadoFinal, transicion, datos,
       actionResult.data || null, actionResult.error || null, actionResult.duracion_ms || 0);
 
-    // Auditoría
+    // Auditoría (registra quién transicionó)
     await pool.query(
-      `INSERT INTO contratacion.auditoria_workflow (contratacion_id, paso_wf, detalle, estado_anterior, estado_nuevo)
-       VALUES ($1, $2, $3, $4, $5)`,
-      [wf.contratacion_id, transicion, JSON.stringify(actionResult.data || {}), estadoAnterior, estadoFinal]
+      `INSERT INTO contratacion.auditoria_workflow (contratacion_id, paso_wf, usuario_ejecutor, detalle, estado_anterior, estado_nuevo)
+       VALUES ($1, $2, $3, $4, $5, $6)`,
+      [wf.contratacion_id, transicion, req.user.email, JSON.stringify(actionResult.data || {}), estadoAnterior, estadoFinal]
     );
 
     res.json({

@@ -1,0 +1,59 @@
+# CUA-BUK Monitor One - Sandbox Services
+# Uso: docker compose -f docker-compose.yml -f docker-compose.sandbox.yml up -d
+# O solo sandboxes: docker compose -f docker-compose.sandbox.yml up -d
+
+version: '3.8'
+
+networks:
+  cua-buk_m1-bf-net:
+    external: true
+
+services:
+  sandbox-buk:
+    build: ./sandbox/sandbox-buk
+    container_name: sandbox-buk
+    environment:
+      PORT: 4005
+      SANDBOX_ERROR_RATE: "0.05"
+    ports:
+      - "4005:4005"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4005/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cua-buk_m1-bf-net
+
+  sandbox-sap:
+    build: ./sandbox/sandbox-sap
+    container_name: sandbox-sap
+    environment:
+      PORT: 4006
+      SANDBOX_ERROR_RATE: "0.05"
+      SANDBOX_TIMEOUT_RATE: "0.02"
+    ports:
+      - "4006:4006"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4006/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cua-buk_m1-bf-net
+
+  sandbox-azuread:
+    build: ./sandbox/sandbox-azuread
+    container_name: sandbox-azuread
+    environment:
+      PORT: 4007
+      SANDBOX_ERROR_RATE: "0.03"
+    ports:
+      - "4007:4007"
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:4007/health || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 3
+    networks:
+      - cua-buk_m1-bf-net

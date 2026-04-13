@@ -9,12 +9,12 @@ async function migrate() {
   console.log('Running database migration...');
 
   const sqlFiles = [
-    '../../infra/postgres/00-init.sql',
-    '../../infra/postgres/01-contratacion.sql',
-    '../../infra/postgres/01b-workflow.sql',
-    '../../infra/postgres/02-usuarios.sql',
-    '../../infra/postgres/03-reportes.sql',
-    '../../infra/postgres/04-seed.sql',
+    '../sql/00-init.sql',
+    '../sql/01-contratacion.sql',
+    '../sql/01b-workflow.sql',
+    '../sql/02-usuarios.sql',
+    '../sql/03-reportes.sql',
+    '../sql/04-seed.sql',
   ];
 
   for (const file of sqlFiles) {

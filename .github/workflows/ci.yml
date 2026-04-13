@@ -1,0 +1,112 @@
+name: CI/CD - CUA-BUK Monitor One
+
+on:
+  push:
+    branches: [main, develop]
+  pull_request:
+    branches: [main]
+
+env:
+  POSTGRES_USER: cua_admin
+  POSTGRES_PASSWORD: cua_admin_2026
+  POSTGRES_DB: cua_buk_db
+  DATABASE_URL: postgresql://cua_admin:cua_admin_2026@localhost:5432/cua_buk_db
+  JWT_SECRET: ci-test-secret-key
+  MOCK_MODE: "true"
+  NODE_ENV: test
+
+jobs:
+  build-and-test:
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:15-alpine
+        env:
+          POSTGRES_USER: cua_admin
+          POSTGRES_PASSWORD: cua_admin_2026
+          POSTGRES_DB: cua_buk_db
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+
+      - name: Install dependencies (all services)
+        run: |
+          for dir in services/cua-orq services/srv-contratacion services/srv-usuarios services/srv-reportes services/adp-buk services/adp-sap services/adp-azuread; do
+            echo "Installing $dir..."
+            cd $dir && npm install && cd ../..
+          done
+
+      - name: Initialize database
+        run: |
+          for sql in infra/postgres/00-init.sql infra/postgres/01-contratacion.sql infra/postgres/01b-workflow.sql infra/postgres/02-usuarios.sql infra/postgres/03-reportes.sql infra/postgres/04-seed.sql; do
+            psql "$DATABASE_URL" -f "$sql"
+          done
+
+      - name: Start services
+        run: |
+          cd services/srv-contratacion && PORT=3002 node src/index.js &
+          cd services/srv-usuarios && PORT=3003 node src/index.js &
+          cd services/srv-reportes && PORT=3004 node src/index.js &
+          cd services/adp-buk && PORT=3005 MOCK_MODE=true node src/index.js &
+          cd services/adp-sap && PORT=3006 MOCK_MODE=true node src/index.js &
+          cd services/adp-azuread && PORT=3007 MOCK_MODE=true node src/index.js &
+          cd services/cua-orq && PORT=3001 ADP_BUK_URL=http://localhost:3005 ADP_SAP_URL=http://localhost:3006 ADP_AZUREAD_URL=http://localhost:3007 SRV_CONTRATACION_URL=http://localhost:3002 node src/index.js &
+          sleep 5
+
+      - name: Health checks
+        run: |
+          for port in 3001 3002 3003 3004 3005 3006 3007; do
+            STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://localhost:$port/health)
+            echo "Port $port: HTTP $STATUS"
+            [ "$STATUS" = "200" ] || exit 1
+          done
+
+      - name: Auth test - login and get token
+        run: |
+          TOKEN=$(curl -s -X POST http://localhost:3003/api/auth/login -H "Content-Type: application/json" -d '{"email":"admin@clinicauandes.cl","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin)['token'])")
+          echo "TOKEN=$TOKEN" >> $GITHUB_ENV
+          [ -n "$TOKEN" ] && echo "Auth OK" || exit 1
+
+      - name: Workflow test - create and transition (with auth)
+        run: |
+          WF=$(curl -s -X POST http://localhost:3001/api/workflow/iniciar -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d '{"tipo_solicitud":"SAP","nombre":"CI","apellido1":"Test","rut":"12345678-9"}')
+          WF_ID=$(echo "$WF" | python3 -c "import sys,json; print(json.load(sys.stdin)['workflow_id'])")
+          echo "Workflow created: $WF_ID"
+          # Transition without token should fail
+          NOAUTH=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:3001/api/workflow/$WF_ID/transicionar" -H "Content-Type: application/json" -d '{"transicion":"VALIDAR_CARGO","datos":{"rut":"12345678-9"}}')
+          echo "No-auth transition: HTTP $NOAUTH"
+          [ "$NOAUTH" = "401" ] && echo "Auth enforcement OK" || exit 1
+          # Transition with token should succeed
+          AUTHRES=$(curl -s -o /dev/null -w "%{http_code}" -X POST "http://localhost:3001/api/workflow/$WF_ID/transicionar" -H "Content-Type: application/json" -H "Authorization: Bearer $TOKEN" -d '{"transicion":"VALIDAR_CARGO","datos":{"rut":"12345678-9"}}')
+          echo "Auth transition: HTTP $AUTHRES"
+          [ "$AUTHRES" = "200" ] && echo "Transition OK" || exit 1
+
+  docker-build:
+    runs-on: ubuntu-latest
+    needs: build-and-test
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Build Docker images
+        run: |
+          for svc in cua-orq srv-contratacion srv-usuarios srv-reportes adp-buk adp-sap adp-azuread cua-page; do
+            echo "Building $svc..."
+            docker build -t cua-buk-$svc:ci ./services/$svc
+          done
+          echo "All images built successfully"

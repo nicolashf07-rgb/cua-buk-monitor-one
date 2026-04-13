@@ -9,6 +9,10 @@ KONG="http://localhost:8000"
 PASS=0
 FAIL=0
 
+# Obtener JWT token para endpoints protegidos
+AUTH_TOKEN=$(curl -s -X POST "$KONG/api/auth/login" -H "Content-Type:application/json" -d '{"email":"admin@clinicauandes.cl","password":"admin123"}' | python3 -c "import sys,json; print(json.load(sys.stdin).get('token',''))" 2>/dev/null)
+AUTH_HEADER="Authorization: Bearer $AUTH_TOKEN"
+
 GREEN='\033[0;32m'
 RED='\033[0;31m'
 CYAN='\033[0;36m'
@@ -134,7 +138,7 @@ echo -e "\n${YELLOW}[5/10] Workflow SAP (7 transiciones)${NC}"
 
 # Iniciar
 SAP_BODY='{"tipo_solicitud":"SAP","nombre":"SAP-E2E","apellido1":"Test","rut":"88888888-8"}'
-curl -s -o /tmp/e2e_body -w "" -X POST -H "Content-Type:application/json" -d "$SAP_BODY" "$KONG/api/workflow/iniciar" > /dev/null
+curl -s -o /tmp/e2e_body -w "" -X POST -H "Content-Type:application/json" -H "$AUTH_HEADER" -d "$SAP_BODY" "$KONG/api/workflow/iniciar" > /dev/null
 SAP_WF=$(cat /tmp/e2e_body | python3 -c "import sys,json; d=json.load(sys.stdin); print(d['workflow_id'])" 2>/dev/null)
 SAP_STATE=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['estado'])" 2>/dev/null)
 [ "$SAP_STATE" = "CREADO" ] && pass "Workflow SAP iniciado: CREADO" || fail "Estado inicial: $SAP_STATE"
@@ -156,7 +160,7 @@ for i in "${!transitions[@]}"; do
   EXPECTED="${expected_states[$i]}"
   DATOS="${datos_list[$i]}"
   BODY="{\"transicion\":\"$TRANS\",\"datos\":$DATOS}"
-  curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -d "$BODY" "$KONG/api/workflow/$SAP_WF/transicionar" > /dev/null
+  curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -H "$AUTH_HEADER" -d "$BODY" "$KONG/api/workflow/$SAP_WF/transicionar" > /dev/null
   GOT_STATE=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin).get('estado_nuevo','ERROR'))" 2>/dev/null)
   [ "$GOT_STATE" = "$EXPECTED" ] && pass "SAP: $TRANS → $EXPECTED" || fail "SAP: $TRANS esperado $EXPECTED, obtuvo $GOT_STATE"
 done
@@ -167,16 +171,16 @@ done
 echo -e "\n${YELLOW}[6/10] Workflow NoSAP (2 transiciones)${NC}"
 
 NOSAP_BODY='{"tipo_solicitud":"NoSAP","nombre":"NoSAP-E2E","apellido1":"Test","rut":"66666666-6"}'
-curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -d "$NOSAP_BODY" "$KONG/api/workflow/iniciar" > /dev/null
+curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -H "$AUTH_HEADER" -d "$NOSAP_BODY" "$KONG/api/workflow/iniciar" > /dev/null
 NOSAP_WF=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['workflow_id'])" 2>/dev/null)
 NOSAP_STATE=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['estado'])" 2>/dev/null)
 [ "$NOSAP_STATE" = "CREADO" ] && pass "Workflow NoSAP iniciado: CREADO" || fail "Estado inicial: $NOSAP_STATE"
 
-curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -d '{"transicion":"VALIDAR_EMAIL","datos":{"email":"nosap.e2e@clinicauandes.cl"}}' "$KONG/api/workflow/$NOSAP_WF/transicionar" > /dev/null
+curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -H "$AUTH_HEADER" -d '{"transicion":"VALIDAR_EMAIL","datos":{"email":"nosap.e2e@clinicauandes.cl"}}' "$KONG/api/workflow/$NOSAP_WF/transicionar" > /dev/null
 GOT=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin).get('estado_nuevo',''))" 2>/dev/null)
 [ "$GOT" = "VALIDANDO_EMAIL" ] && pass "NoSAP: VALIDAR_EMAIL → VALIDANDO_EMAIL" || fail "NoSAP: esperado VALIDANDO_EMAIL, obtuvo $GOT"
 
-curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -d '{"transicion":"EMAIL_VALIDADO"}' "$KONG/api/workflow/$NOSAP_WF/transicionar" > /dev/null
+curl -s -o /tmp/e2e_body -X POST -H "Content-Type:application/json" -H "$AUTH_HEADER" -d '{"transicion":"EMAIL_VALIDADO"}' "$KONG/api/workflow/$NOSAP_WF/transicionar" > /dev/null
 GOT=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin).get('estado_nuevo',''))" 2>/dev/null)
 [ "$GOT" = "FINALIZADO" ] && pass "NoSAP: EMAIL_VALIDADO → FINALIZADO" || fail "NoSAP: esperado FINALIZADO, obtuvo $GOT"
 

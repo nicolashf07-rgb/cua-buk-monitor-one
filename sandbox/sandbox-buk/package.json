@@ -1,0 +1,14 @@
+{
+  "name": "sandbox-buk",
+  "version": "1.0.0",
+  "description": "Sandbox que simula BUK HR API real con OAuth2, paginacion, rate limit y latencia",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js"
+  },
+  "dependencies": {
+    "express": "^4.21.0",
+    "cors": "^2.8.5",
+    "uuid": "^10.0.0"
+  }
+}
