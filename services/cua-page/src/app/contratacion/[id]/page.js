@@ -6,7 +6,7 @@ import NavBar from '@/components/NavBar';
 import WorkflowStatusBadge from '@/components/WorkflowStatusBadge';
 import WorkflowStepper from '@/components/WorkflowStepper';
 import TransicionModal from '@/components/TransicionModal';
-import { getMe, getContratacion, getWorkflows, getWorkflowEstado, transicionarWorkflow } from '@/lib/api';
+import { getMe, getContratacion, getContratacionCargo, getContratacionBP, getWorkflows, getWorkflowEstado, transicionarWorkflow } from '@/lib/api';
 
 // Labels legibles para campos de contratación
 const FIELD_LABELS = {
@@ -60,6 +60,8 @@ export default function ContratacionDetallePage() {
   const [contratacion, setContratacion] = useState(null);
   const [workflow, setWorkflow] = useState(null);
   const [workflowEstado, setWorkflowEstado] = useState(null);
+  const [cargoData, setCargoData] = useState(null);
+  const [bpData, setBpData] = useState(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [error, setError] = useState('');
@@ -84,6 +86,10 @@ export default function ContratacionDetallePage() {
 
       setUser(userData);
       setContratacion(contData);
+
+      // Fetch cargo and BP data (optional, may not exist)
+      try { const cargo = await getContratacionCargo(id); setCargoData(cargo); } catch { /* no cargo data */ }
+      try { const bp = await getContratacionBP(id); setBpData(bp); } catch { /* no BP data */ }
 
       try {
         const wfs = await getWorkflows();
@@ -312,8 +318,38 @@ export default function ContratacionDetallePage() {
             )}
           </div>
 
-          {/* Estados */}
+          {/* Cargo, BP y Estados */}
           <div className="space-y-6">
+            {/* Cargo / Area / Departamento */}
+            {cargoData && (
+              <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-6">
+                <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Cargo / Area</h2>
+                <dl className="space-y-2 text-sm">
+                  {cargoData.cargo && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Cargo</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{cargoData.cargo}</dd></div>}
+                  {cargoData.area && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Area</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{cargoData.area}</dd></div>}
+                  {cargoData.centro_costo && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Centro Costo</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{cargoData.centro_costo}</dd></div>}
+                  {cargoData.jefe_directo && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Jefe Directo</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{cargoData.jefe_directo}</dd></div>}
+                  {cargoData.validado !== undefined && <div className="flex justify-between py-1"><dt className="text-gray-500 dark:text-gray-400">Validado</dt><dd className="font-medium">{cargoData.validado ? <span className="text-green-600">Si</span> : <span className="text-yellow-600">Pendiente</span>}</dd></div>}
+                </dl>
+              </div>
+            )}
+
+            {/* Business Partner SAP / Cargo HIS */}
+            {bpData && (
+              <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-6">
+                <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Business Partner SAP</h2>
+                <dl className="space-y-2 text-sm">
+                  {bpData.gpart && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">GPART</dt><dd className="font-mono font-medium text-gray-900 dark:text-gray-100">{bpData.gpart}</dd></div>}
+                  {bpData.status && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Estado BP</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{bpData.status}</dd></div>}
+                  {bpData.phy_ind && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Medico Registrado</dt><dd className="font-medium text-green-600">Si</dd></div>}
+                  {bpData.phy_num && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Cargo HIS (phy_num)</dt><dd className="font-mono font-medium text-blue-700 dark:text-blue-400">{bpData.phy_num}</dd></div>}
+                  {bpData.med_staff_type && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Tipo Staff Medico</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{bpData.med_staff_type}</dd></div>}
+                  {bpData.fonasa_group && <div className="flex justify-between py-1 border-b border-gray-200 dark:border-gray-800"><dt className="text-gray-500 dark:text-gray-400">Grupo FONASA</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{bpData.fonasa_group}</dd></div>}
+                  {bpData.isapre && <div className="flex justify-between py-1"><dt className="text-gray-500 dark:text-gray-400">ISAPRE</dt><dd className="font-medium text-gray-900 dark:text-gray-100">{bpData.isapre}</dd></div>}
+                </dl>
+              </div>
+            )}
+
             <div className="bg-white dark:bg-gray-900 rounded-lg shadow p-6">
               <h2 className="text-sm font-semibold text-gray-500 dark:text-gray-400 uppercase tracking-wide mb-4">Estados</h2>
               <div className="space-y-3">

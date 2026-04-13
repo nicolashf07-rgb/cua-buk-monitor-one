@@ -153,6 +153,72 @@ app.put('/api/contrataciones/:id', async (req, res) => {
   }
 });
 
+// --- Validación de cargo: GET + PUT área/departamento ---
+app.get('/api/contrataciones/:id/cargo', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM contratacion.validacion_cargo_form WHERE contratacion_id = $1 ORDER BY created_at DESC LIMIT 1', [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Validación de cargo no encontrada' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error obteniendo cargo:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+app.put('/api/contrataciones/:id/cargo', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { area, cargo, centro_costo, jefe_directo, jefe_email } = req.body;
+    // Check if exists
+    const existing = await pool.query(
+      'SELECT id FROM contratacion.validacion_cargo_form WHERE contratacion_id = $1', [id]
+    );
+    if (existing.rows.length === 0) {
+      // Create
+      const result = await pool.query(
+        `INSERT INTO contratacion.validacion_cargo_form (contratacion_id, area, cargo, centro_costo, jefe_directo, jefe_email)
+         VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+        [id, area || null, cargo || null, centro_costo || null, jefe_directo || null, jefe_email || null]
+      );
+      return res.status(201).json(result.rows[0]);
+    }
+    // Update
+    const result = await pool.query(
+      `UPDATE contratacion.validacion_cargo_form SET
+         area = COALESCE($2, area),
+         cargo = COALESCE($3, cargo),
+         centro_costo = COALESCE($4, centro_costo),
+         jefe_directo = COALESCE($5, jefe_directo),
+         jefe_email = COALESCE($6, jefe_email),
+         updated_at = NOW()
+       WHERE contratacion_id = $1 RETURNING *`,
+      [id, area || null, cargo || null, centro_costo || null, jefe_directo || null, jefe_email || null]
+    );
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error actualizando cargo:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
+// --- Validación BP (Cargo HIS / phy_num) ---
+app.get('/api/contrataciones/:id/bp', async (req, res) => {
+  try {
+    const { id } = req.params;
+    const result = await pool.query(
+      'SELECT * FROM contratacion.validacion_bp WHERE contratacion_id = $1 ORDER BY created_at DESC LIMIT 1', [id]
+    );
+    if (result.rows.length === 0) return res.status(404).json({ error: 'Validación BP no encontrada' });
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('Error obteniendo BP:', err);
+    res.status(500).json({ error: 'Error interno del servidor' });
+  }
+});
+
 // --- Reportes (consolidado de srv-reportes) ---
 app.get('/api/reportes/historico', async (req, res) => {
   try {

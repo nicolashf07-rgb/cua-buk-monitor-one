@@ -91,3 +91,11 @@ export async function getHistorico() {
 export async function getBukEmployee(rut) {
   return apiFetch(`/api/buk/employees/${rut}`);
 }
+
+export async function getContratacionCargo(id) {
+  return apiFetch(`/api/contrataciones/${id}/cargo`);
+}
+
+export async function getContratacionBP(id) {
+  return apiFetch(`/api/contrataciones/${id}/bp`);
+}
