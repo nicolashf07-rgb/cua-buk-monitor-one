@@ -4,6 +4,8 @@ const cors = require('cors');
 const axios = require('axios');
 const axiosRetry = require('axios-retry').default;
 const CircuitBreaker = require('opossum');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization'], serializers: { err: pino.stdSerializers.err } });
 
 const app = express();
 const PORT = process.env.PORT || 3005;
@@ -14,8 +16,10 @@ const BUK_API_URL = process.env.BUK_API_URL || 'http://sandbox-buk:4005';
 const BUK_CLIENT_ID = process.env.BUK_CLIENT_ID || 'cua-buk-client';
 const BUK_CLIENT_SECRET = process.env.BUK_CLIENT_SECRET || 'cua-buk-secret';
 
-app.use(cors());
-app.use(express.json());
+// CORS restrictivo: solo servicios internos Docker
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // ============================================================
 // MOCK MODE: datos locales (original)
@@ -38,7 +42,7 @@ async function getOAuth2Token() {
     return tokenCache.access_token;
   }
 
-  console.log('[BUK-AUTH] Requesting new OAuth2 token...');
+  logger.info('[BUK-AUTH] Requesting new OAuth2 token...');
   const res = await axios.post(`${BUK_API_URL}/oauth/token`, {
     client_id: BUK_CLIENT_ID,
     client_secret: BUK_CLIENT_SECRET,
@@ -51,7 +55,7 @@ async function getOAuth2Token() {
     expires_at: Date.now() + (res.data.expires_in - 60) * 1000, // refresh 60s before expiry
   };
 
-  console.log(`[BUK-AUTH] Token obtained, expires in ${res.data.expires_in}s`);
+  logger.info(`[BUK-AUTH] Token obtained, expires in ${res.data.expires_in}s`);
   return tokenCache.access_token;
 }
 
@@ -64,7 +68,7 @@ axiosRetry(bukClient, {
     // Respect Retry-After header on 429 rate limit responses
     if (error.response && error.response.status === 429) {
       const retryAfter = parseInt(error.response.headers['retry-after'] || error.response.data?.retry_after_seconds || '5');
-      console.log(`[BUK-RETRY] Rate limited (429), waiting ${retryAfter}s`);
+      logger.info(`[BUK-RETRY] Rate limited (429), waiting ${retryAfter}s`);
       return retryAfter * 1000;
     }
     return axiosRetry.exponentialDelay(retryCount);
@@ -75,7 +79,7 @@ axiosRetry(bukClient, {
       (error.response && error.response.status === 429);
   },
   onRetry: (retryCount, error) => {
-    console.log(`[BUK-RETRY] Attempt ${retryCount}: ${error.message}`);
+    logger.info(`[BUK-RETRY] Attempt ${retryCount}: ${error.message}`);
   },
 });
 
@@ -97,9 +101,9 @@ async function fetchEmployeeFromBUK(rut) {
 
 const breaker = new CircuitBreaker(fetchEmployeeFromBUK, breakerOptions);
 
-breaker.on('open', () => console.log('[BUK-CIRCUIT] OPEN - BUK API unavailable, using fallback'));
-breaker.on('halfOpen', () => console.log('[BUK-CIRCUIT] HALF-OPEN - Testing BUK API...'));
-breaker.on('close', () => console.log('[BUK-CIRCUIT] CLOSED - BUK API recovered'));
+breaker.on('open', () => logger.info('[BUK-CIRCUIT] OPEN - BUK API unavailable, using fallback'));
+breaker.on('halfOpen', () => logger.info('[BUK-CIRCUIT] HALF-OPEN - Testing BUK API...'));
+breaker.on('close', () => logger.info('[BUK-CIRCUIT] CLOSED - BUK API recovered'));
 
 // --- EmployeeDTO Mapper: BUK API response → internal DTO ---
 function mapBukToDTO(bukData) {
@@ -138,12 +142,9 @@ app.get('/health', async (_req, res) => {
     timestamp: new Date().toISOString(),
   };
 
+  // No exponer detalles internos en health check
   if (!MOCK_MODE) {
-    health.buk_api_url = BUK_API_URL;
-    health.circuit_breaker = breaker.status.name === 'open' ? 'OPEN' : breaker.status.name === 'halfOpen' ? 'HALF-OPEN' : 'CLOSED';
-    health.token_cached = !!tokenCache.access_token && Date.now() < tokenCache.expires_at;
-  } else {
-    health.employees_count = Object.keys(MOCK_EMPLOYEES).length;
+    health.circuit_breaker = breaker.status.name === 'open' ? 'OPEN' : 'OK';
   }
 
   res.json(health);
@@ -171,7 +172,7 @@ app.get('/api/buk/employees/:rut', async (req, res) => {
     const dto = mapBukToDTO(bukData);
     res.json({ ...dto, mock_mode: false });
   } catch (err) {
-    console.error(`[BUK-ERROR] ${err.message}`);
+    logger.error(`[BUK-ERROR] ${err.message}`);
 
     if (err.message && err.message.includes('Breaker is open')) {
       return res.status(503).json({ error: 'BUK API unavailable (circuit breaker open)', rut, mock_mode: false });
@@ -206,15 +207,15 @@ app.get('/api/buk/employees', async (req, res) => {
     const pagination = bukRes.data.pagination || { page: Number(page), per_page: Number(per_page), total_entries: employees.length, total_pages: 1 };
     res.json({ total: pagination.total_entries, data: employees, pagination, mock_mode: false });
   } catch (err) {
-    console.error(`[BUK-ERROR] List: ${err.message}`);
+    logger.error(`[BUK-ERROR] List: ${err.message}`);
     res.status(500).json({ error: 'Error listing employees from BUK', mock_mode: false });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`adp-buk running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
+  logger.info(`adp-buk running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
   if (!MOCK_MODE) {
-    console.log(`  BUK_API_URL: ${BUK_API_URL}`);
-    console.log(`  Circuit breaker: ${breakerOptions.errorThresholdPercentage}% threshold, ${breakerOptions.resetTimeout}ms reset`);
+    logger.info(`  BUK_API_URL: ${BUK_API_URL}`);
+    logger.info(`  Circuit breaker: ${breakerOptions.errorThresholdPercentage}% threshold, ${breakerOptions.resetTimeout}ms reset`);
   }
 });

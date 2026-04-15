@@ -16,8 +16,9 @@ services:
       POSTGRES_USER: ${POSTGRES_USER}
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
       POSTGRES_DB: ${POSTGRES_DB}
-    ports:
-      - "5432:5432"
+    # Puerto NO expuesto al host por seguridad (acceso solo via red interna Docker)
+    # ports:
+    #   - "5432:5432"
     volumes:
       - pg-data:/var/lib/postgresql/data
       - ./infra/postgres/00-init.sql:/docker-entrypoint-initdb.d/00-init.sql
@@ -26,6 +27,7 @@ services:
       - ./infra/postgres/02-usuarios.sql:/docker-entrypoint-initdb.d/02-usuarios.sql
       - ./infra/postgres/03-reportes.sql:/docker-entrypoint-initdb.d/03-reportes.sql
       - ./infra/postgres/04-seed.sql:/docker-entrypoint-initdb.d/04-seed.sql
+      - ./infra/postgres/05-security-upgrade.sql:/docker-entrypoint-initdb.d/05-security-upgrade.sql
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB}"]
       interval: 5s
@@ -41,14 +43,18 @@ services:
     environment:
       KONG_DATABASE: "off"
       KONG_DECLARATIVE_CONFIG: /etc/kong/kong.yml
-      KONG_PROXY_LISTEN: "0.0.0.0:8000"
-      KONG_ADMIN_LISTEN: "0.0.0.0:8001"
+      KONG_PROXY_LISTEN: "0.0.0.0:8000, 0.0.0.0:8443 ssl"
+      KONG_ADMIN_LISTEN: "127.0.0.1:8001"
+      KONG_SSL_CERT: /etc/kong/certs/server.crt
+      KONG_SSL_CERT_KEY: /etc/kong/certs/server.key
       KONG_LOG_LEVEL: info
     ports:
       - "8000:8000"
-      - "8001:8001"
+      - "8443:8443"
+      # Admin port NO expuesto (127.0.0.1 only)
     volumes:
       - ./infra/kong/kong.yml:/etc/kong/kong.yml:ro
+      - ./infra/certs:/etc/kong/certs:ro
     healthcheck:
       test: ["CMD", "kong", "health"]
       interval: 10s
@@ -107,6 +113,8 @@ services:
     environment:
       PORT: 3002
       DATABASE_URL: ${DATABASE_URL}
+      JWT_SECRET: ${JWT_SECRET}
+      ALLOWED_ORIGINS: "http://cua-page:3000,http://localhost:8000"
       NODE_ENV: ${NODE_ENV}
     healthcheck:
       test: ["CMD-SHELL", "wget -q --spider http://localhost:3002/health || exit 1"]

@@ -4,13 +4,48 @@ const cors = require('cors');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { Pool } = require('pg');
+const pino = require('pino');
+
+const logger = pino({
+  level: process.env.LOG_LEVEL || 'info',
+  redact: ['req.headers.authorization'],
+  serializers: { err: pino.stdSerializers.err },
+});
 
 const app = express();
 const PORT = process.env.PORT || 3001;
-const JWT_SECRET = process.env.JWT_SECRET || 'cua-buk-secret-dev';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) {
+  logger.error('FATAL: JWT_SECRET no configurado.');
+  process.exit(1);
+}
 
-app.use(cors());
-app.use(express.json());
+const helmet = require('helmet');
+const crypto = require('crypto');
+
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+
+app.use(helmet({ contentSecurityPolicy: false, crossOriginEmbedderPolicy: false }));
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
+
+// Correlation ID
+app.use((req, _res, next) => {
+  req.correlationId = req.headers['x-request-id'] || crypto.randomUUID();
+  next();
+});
+
+// Request logger
+app.use((req, res, next) => {
+  const start = Date.now();
+  const originalEnd = res.end;
+  res.end = function(...args) {
+    logger.info({ method: req.method, path: req.originalUrl, status: res.statusCode, duration_ms: Date.now() - start, ip: req.ip, user: req.user?.email || '-' },
+      `${req.method} ${req.originalUrl} ${res.statusCode} ${Date.now() - start}ms`);
+    originalEnd.apply(res, args);
+  };
+  next();
+});
 
 // ============================================================
 // Middleware: JWT Authentication
@@ -33,7 +68,19 @@ function authMiddleware(req, res, next) {
   }
 }
 
-const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+function requireRole(...roles) {
+  return (req, res, next) => {
+    if (!req.user || !req.user.roles) return res.status(403).json({ error: 'Sin roles' });
+    const hasRole = req.user.roles.some(r => roles.includes(r) || r === 'admin');
+    if (!hasRole) return res.status(403).json({ error: 'Permisos insuficientes' });
+    next();
+  };
+}
+
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: process.env.DB_SSL === 'true' ? { rejectUnauthorized: false } : false,
+});
 
 // URLs de servicios internos
 const SRV_CONTRATACION_URL = process.env.SRV_CONTRATACION_URL || 'http://srv-contratacion:3002';
@@ -78,11 +125,15 @@ function getNextState(tipo, estadoActual, transicion) {
 // ============================================================
 // Helpers: llamadas HTTP a servicios internos
 // ============================================================
-async function callService(url, options = {}) {
+async function callService(url, options = {}, correlationId = null, authHeader = null) {
   const start = Date.now();
   try {
+    const headers = { 'Content-Type': 'application/json' };
+    if (correlationId) headers['X-Request-ID'] = correlationId;
+    if (authHeader) headers['Authorization'] = authHeader;
     const res = await fetch(url, {
-      headers: { 'Content-Type': 'application/json' },
+      headers,
+      signal: AbortSignal.timeout(30000),
       ...options,
     });
     const data = await res.json();
@@ -93,7 +144,7 @@ async function callService(url, options = {}) {
 }
 
 // Acciones automáticas por transición
-async function executeTransitionAction(workflow, transicion, datos) {
+async function executeTransitionAction(workflow, transicion, datos, authHeader = null) {
   const { tipo_solicitud, contratacion_id } = workflow;
 
   switch (transicion) {
@@ -101,7 +152,7 @@ async function executeTransitionAction(workflow, transicion, datos) {
       // Consultar datos del empleado en BUK por RUT
       const rut = datos?.rut;
       if (!rut) return { ok: true, data: { message: 'Sin RUT, validación manual' } };
-      return await callService(`${ADP_BUK_URL}/api/buk/employees/${rut}`);
+      return await callService(`${ADP_BUK_URL}/api/buk/employees/${rut}`, {}, null, authHeader);
     }
 
     case 'CREAR_BP': {
@@ -110,7 +161,7 @@ async function executeTransitionAction(workflow, transicion, datos) {
       return await callService(`${ADP_SAP_URL}/api/sap/business-partner`, {
         method: 'POST',
         body: JSON.stringify(bpData),
-      });
+      }, null, authHeader);
     }
 
     case 'VALIDAR_EMAIL': {
@@ -120,7 +171,7 @@ async function executeTransitionAction(workflow, transicion, datos) {
       return await callService(`${ADP_AZUREAD_URL}/api/azure-ad/validar-email`, {
         method: 'POST',
         body: JSON.stringify({ email }),
-      });
+      }, null, authHeader);
     }
 
     default:
@@ -190,7 +241,7 @@ app.post('/api/workflow/iniciar', authMiddleware, async (req, res) => {
       const srvRes = await callService(`${SRV_CONTRATACION_URL}/api/contrataciones`, {
         method: 'POST',
         body: JSON.stringify({ tipo_solicitud, nombre, apellido1, apellido2, rut, cargo_rrhh }),
-      });
+      }, null, req.headers.authorization);
       if (!srvRes.ok) {
         return res.status(500).json({ error: 'Error creando contratación', detalle: srvRes.data || srvRes.error });
       }
@@ -223,7 +274,7 @@ app.post('/api/workflow/iniciar', authMiddleware, async (req, res) => {
       created_at: wf.created_at,
     });
   } catch (err) {
-    console.error('Error al iniciar workflow:', err);
+    logger.error('Error al iniciar workflow:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
@@ -258,7 +309,7 @@ app.post('/api/workflow/:id/transicionar', authMiddleware, async (req, res) => {
     }
 
     // Ejecutar acción asociada a la transición
-    const actionResult = await executeTransitionAction(wf, transicion, datos || {});
+    const actionResult = await executeTransitionAction(wf, transicion, datos || {}, req.headers.authorization);
 
     // Si la acción falló y no es ERROR explícito, forzar INTERVENCION_MANUAL
     let estadoFinal = estadoNuevo;
@@ -299,13 +350,13 @@ app.post('/api/workflow/:id/transicionar', authMiddleware, async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error('Error al transicionar workflow:', err);
+    logger.error('Error al transicionar workflow:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
-// --- Estado del workflow ---
-app.get('/api/workflow/:id/estado', async (req, res) => {
+// --- Estado del workflow (requiere auth) ---
+app.get('/api/workflow/:id/estado', authMiddleware, async (req, res) => {
   try {
     const { id } = req.params;
 
@@ -342,13 +393,13 @@ app.get('/api/workflow/:id/estado', async (req, res) => {
       updated_at: wf.updated_at,
     });
   } catch (err) {
-    console.error('Error al obtener estado:', err);
+    logger.error('Error al obtener estado:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
-// --- Listar workflows ---
-app.get('/api/workflow', async (_req, res) => {
+// --- Listar workflows (requiere auth) ---
+app.get('/api/workflow', authMiddleware, async (_req, res) => {
   try {
     const result = await pool.query(
       `SELECT w.*, c.idta, c.nombre, c.apellido1, c.rut
@@ -358,11 +409,11 @@ app.get('/api/workflow', async (_req, res) => {
     );
     res.json({ total: result.rows.length, data: result.rows });
   } catch (err) {
-    console.error('Error listando workflows:', err);
+    logger.error('Error listando workflows:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`cua-orq running on port ${PORT}`);
+  logger.info(`cua-orq running on port ${PORT}`);
 });

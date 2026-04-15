@@ -10,6 +10,7 @@ const navLinks = [
   { href: '/dashboard', label: 'Dashboard' },
   { href: '/nueva-sap', label: 'Nueva SAP' },
   { href: '/nueva-nosap', label: 'Nueva NoSAP' },
+  { href: '/nueva-honorario', label: 'Nuevo Honorario' },
   { href: '/historico', label: 'Historico' },
 ];
 
@@ -18,8 +19,8 @@ export default function NavBar({ userEmail }) {
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
 
-  const handleLogout = () => {
-    logout();
+  const handleLogout = async () => {
+    await logout();
     router.replace('/login');
   };
 

@@ -1,5 +1,47 @@
 _format_version: "3.0"
 
+# --- Global Plugins (seguridad) ---
+plugins:
+  - name: rate-limiting
+    config:
+      minute: 100
+      policy: local
+      fault_tolerant: true
+      hide_client_headers: false
+
+  - name: response-transformer
+    config:
+      add:
+        headers:
+          - "X-Content-Type-Options: nosniff"
+          - "X-Frame-Options: DENY"
+          - "X-XSS-Protection: 1; mode=block"
+          - "Referrer-Policy: strict-origin-when-cross-origin"
+          - "Permissions-Policy: camera=(), microphone=(), geolocation=()"
+          - "Strict-Transport-Security: max-age=31536000; includeSubDomains"
+          - "Cache-Control: no-store"
+
+  - name: cors
+    config:
+      origins:
+        - "http://localhost:3000"
+        - "http://localhost:8000"
+      methods:
+        - GET
+        - POST
+        - PUT
+        - DELETE
+        - OPTIONS
+      headers:
+        - Authorization
+        - Content-Type
+      credentials: true
+      max_age: 3600
+
+  - name: request-size-limiting
+    config:
+      allowed_payload_size: 2
+
 services:
   - name: cua-orq
     url: http://cua-orq:3001
@@ -18,19 +60,32 @@ services:
         strip_path: false
 
   - name: srv-usuarios
-    url: http://srv-usuarios:3003
+    url: http://srv-contratacion:3002
     routes:
       - name: auth-routes
         paths:
           - /api/auth
         strip_path: false
+        plugins:
+          - name: rate-limiting
+            config:
+              minute: 10
+              policy: local
 
   - name: srv-reportes
-    url: http://srv-reportes:3004
+    url: http://srv-contratacion:3002
     routes:
       - name: reportes-routes
         paths:
           - /api/reportes
+        strip_path: false
+
+  - name: cargo-his
+    url: http://srv-contratacion:3002
+    routes:
+      - name: cargo-his-routes
+        paths:
+          - /api/cargo-his
         strip_path: false
 
   - name: adp-buk

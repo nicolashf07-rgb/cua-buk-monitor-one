@@ -5,13 +5,17 @@ const bcrypt = require('bcryptjs');
 const jwt = require('jsonwebtoken');
 const { v4: uuidv4 } = require('uuid');
 const { Pool } = require('pg');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization'], serializers: { err: pino.stdSerializers.err } });
 
 const app = express();
 const PORT = process.env.PORT || 3003;
-const JWT_SECRET = process.env.JWT_SECRET || 'cua-buk-secret-dev';
+const JWT_SECRET = process.env.JWT_SECRET;
+if (!JWT_SECRET) { logger.error('FATAL: JWT_SECRET no configurado.'); process.exit(1); }
 
-app.use(cors());
-app.use(express.json());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // PostgreSQL connection
 const pool = new Pool({
@@ -71,7 +75,7 @@ app.post('/api/auth/register', async (req, res) => {
       roles: [userRole],
     });
   } catch (err) {
-    console.error('Error en register:', err);
+    logger.error('Error en register:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
@@ -111,7 +115,7 @@ app.post('/api/auth/login', async (req, res) => {
     const token = jwt.sign(
       { userId: user.id, email: user.email, roles },
       JWT_SECRET,
-      { expiresIn: '8h' }
+      { expiresIn: '1h' }
     );
 
     res.json({
@@ -125,7 +129,7 @@ app.post('/api/auth/login', async (req, res) => {
       },
     });
   } catch (err) {
-    console.error('Error en login:', err);
+    logger.error('Error en login:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
@@ -163,11 +167,11 @@ app.get('/api/auth/me', async (req, res) => {
     if (err.name === 'JsonWebTokenError' || err.name === 'TokenExpiredError') {
       return res.status(401).json({ error: 'Token invalido o expirado' });
     }
-    console.error('Error en /me:', err);
+    logger.error('Error en /me:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`srv-usuarios running on port ${PORT}`);
+  logger.info(`srv-usuarios running on port ${PORT}`);
 });

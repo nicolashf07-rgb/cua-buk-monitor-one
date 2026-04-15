@@ -5,6 +5,8 @@ const Joi = require('joi');
 const axios = require('axios');
 const axiosRetry = require('axios-retry').default;
 const CircuitBreaker = require('opossum');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization'], serializers: { err: pino.stdSerializers.err } });
 
 const app = express();
 const PORT = process.env.PORT || 3006;
@@ -15,8 +17,9 @@ const SAP_API_URL = process.env.SAP_API_URL || 'http://sandbox-sap:4006';
 const SAP_API_KEY = process.env.SAP_API_KEY || 'sandbox-sap-key';
 const SAP_TIMEOUT = parseInt(process.env.SAP_TIMEOUT || '30000');
 
-app.use(cors());
-app.use(express.json());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // ============================================================
 // Joi Schema: 38 campos en 6 categorías (shared mock+real)
@@ -105,7 +108,7 @@ axiosRetry(sapClient, {
       (error.response && error.response.status >= 500);
   },
   onRetry: (retryCount, error) => {
-    console.log(`[SAP-RETRY] Attempt ${retryCount}: ${error.message}`);
+    logger.info(`[SAP-RETRY] Attempt ${retryCount}: ${error.message}`);
   },
 });
 
@@ -123,7 +126,7 @@ async function fetchCSRFToken() {
   if (csrfTokenCache.token && Date.now() < csrfTokenCache.expires_at) {
     return csrfTokenCache;
   }
-  console.log('[SAP-CSRF] Fetching CSRF token...');
+  logger.info('[SAP-CSRF] Fetching CSRF token...');
   const res = await sapClient.get(
     `${SAP_API_URL}/sap/opu/odata/sap/API_BUSINESS_PARTNER/A_BusinessPartner`,
     {
@@ -137,7 +140,7 @@ async function fetchCSRFToken() {
   const token = res.headers['x-csrf-token'] || 'sandbox-csrf-ok';
   const cookies = res.headers['set-cookie'] || [];
   csrfTokenCache = { token, cookies, expires_at: Date.now() + 1800000 }; // 30min
-  console.log('[SAP-CSRF] Token obtained');
+  logger.info('[SAP-CSRF] Token obtained');
   return csrfTokenCache;
 }
 
@@ -159,9 +162,9 @@ async function createBPInSAP(pascalData) {
 }
 
 const breaker = new CircuitBreaker(createBPInSAP, breakerOptions);
-breaker.on('open', () => console.log('[SAP-CIRCUIT] OPEN - SAP unavailable'));
-breaker.on('halfOpen', () => console.log('[SAP-CIRCUIT] HALF-OPEN - Testing SAP...'));
-breaker.on('close', () => console.log('[SAP-CIRCUIT] CLOSED - SAP recovered'));
+breaker.on('open', () => logger.info('[SAP-CIRCUIT] OPEN - SAP unavailable'));
+breaker.on('halfOpen', () => logger.info('[SAP-CIRCUIT] HALF-OPEN - Testing SAP...'));
+breaker.on('close', () => logger.info('[SAP-CIRCUIT] CLOSED - SAP recovered'));
 
 // Parse SAP OData response → internal format
 function parseSAPResponse(sapData) {
@@ -237,7 +240,7 @@ app.post('/api/sap/business-partner', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error(`[SAP-ERROR] ${err.message}`);
+    logger.error(`[SAP-ERROR] ${err.message}`);
 
     if (err.message && err.message.includes('Breaker is open')) {
       return res.status(503).json({ error: 'SAP unavailable (circuit breaker open)', mock_mode: false });
@@ -287,9 +290,9 @@ app.get('/api/sap/business-partner/:gpart', async (req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`adp-sap running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
+  logger.info(`adp-sap running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
   if (!MOCK_MODE) {
-    console.log(`  SAP_API_URL: ${SAP_API_URL}`);
-    console.log(`  SAP_TIMEOUT: ${SAP_TIMEOUT}ms`);
+    logger.info(`  SAP_API_URL: ${SAP_API_URL}`);
+    logger.info(`  SAP_TIMEOUT: ${SAP_TIMEOUT}ms`);
   }
 });

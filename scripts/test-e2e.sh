@@ -23,16 +23,19 @@ pass() { PASS=$((PASS+1)); echo -e "  ${GREEN}✓${NC} $1"; }
 fail() { FAIL=$((FAIL+1)); echo -e "  ${RED}✗${NC} $1"; }
 
 check_status() {
-  local desc="$1" url="$2" expected="$3" method="${4:-GET}" body="$5"
-  local status
+  local desc="$1" url="$2" expected="$3" method="${4:-GET}" body="$5" auth="${6:-}"
+  local status auth_args=()
+  if [ -n "$auth" ]; then
+    auth_args=(-H "$auth")
+  fi
   if [ "$method" = "POST" ] && [ -n "$body" ]; then
-    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X POST -H "Content-Type: application/json" -d "$body" "$url" 2>/dev/null)
+    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X POST -H "Content-Type: application/json" "${auth_args[@]}" -d "$body" "$url" 2>/dev/null)
   elif [ "$method" = "POST" ]; then
-    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X POST "$url" 2>/dev/null)
+    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X POST "${auth_args[@]}" "$url" 2>/dev/null)
   elif [ "$method" = "PUT" ] && [ -n "$body" ]; then
-    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X PUT -H "Content-Type: application/json" -d "$body" "$url" 2>/dev/null)
+    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" -X PUT -H "Content-Type: application/json" "${auth_args[@]}" -d "$body" "$url" 2>/dev/null)
   else
-    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" "$url" 2>/dev/null)
+    status=$(curl -s -o /tmp/e2e_body -w "%{http_code}" "${auth_args[@]}" "$url" 2>/dev/null)
   fi
   if [ "$status" = "$expected" ]; then
     pass "$desc (HTTP $status)"
@@ -63,7 +66,7 @@ echo -e "${YELLOW}[1/10] Health Checks${NC}"
 
 check_status "Kong admin status" "http://localhost:8001/status" "200"
 check_status "cua-page /health" "$KONG/health" "200"
-check_status "srv-contratacion health" "$KONG/api/contrataciones" "200"
+check_status "srv-contratacion health" "$KONG/api/contrataciones" "200" "GET" "" "$AUTH_HEADER"
 check_status "adp-buk health" "$KONG/api/buk/employees" "200"
 
 PG_OK=$(docker exec cua-postgres psql -U cua_admin -d cua_buk_db -t -c "SELECT 1" 2>/dev/null | tr -d ' ')
@@ -112,22 +115,22 @@ check_status "GET /me sin token = 401" "$KONG/api/auth/me" "401"
 # ============================================================
 echo -e "\n${YELLOW}[4/10] CRUD Contrataciones${NC}"
 
-check_status "Listar contrataciones" "$KONG/api/contrataciones" "200"
+check_status "Listar contrataciones" "$KONG/api/contrataciones" "200" "GET" "" "$AUTH_HEADER"
 CT_SEED=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(len(json.load(sys.stdin)))" 2>/dev/null)
 [ "$CT_SEED" -ge 5 ] && pass "5+ contrataciones seed ($CT_SEED)" || fail "Esperadas 5+ contrataciones, tiene $CT_SEED"
 
 # Crear nueva
-check_status "Crear contratación" "$KONG/api/contrataciones" "201" "POST" '{"tipo_solicitud":"SAP","nombre":"E2E","apellido1":"Test","rut":"77777777-7","cargo_rrhh":"QA Engineer"}'
+check_status "Crear contratación" "$KONG/api/contrataciones" "201" "POST" '{"tipo_solicitud":"SAP","nombre":"E2E","apellido1":"Test","rut":"77777777-7","cargo_rrhh":"QA Engineer"}' "$AUTH_HEADER"
 NEW_CT_ID=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['id'])" 2>/dev/null)
 NEW_CT_IDTA=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['idta'])" 2>/dev/null)
 [ -n "$NEW_CT_ID" ] && pass "ID UUID generado: ${NEW_CT_ID:0:8}..." || fail "No se generó UUID"
 [[ "$NEW_CT_IDTA" == CUA-2026-* ]] && pass "IDTA generado: $NEW_CT_IDTA" || fail "IDTA inválido: $NEW_CT_IDTA"
 
 # Leer por ID
-check_status "Leer contratación por ID" "$KONG/api/contrataciones/$NEW_CT_ID" "200"
+check_status "Leer contratación por ID" "$KONG/api/contrataciones/$NEW_CT_ID" "200" "GET" "" "$AUTH_HEADER"
 
 # Actualizar
-check_status "Actualizar contratación" "$KONG/api/contrataciones/$NEW_CT_ID" "200" "PUT" '{"cargo_rrhh":"Senior QA Engineer"}'
+check_status "Actualizar contratación" "$KONG/api/contrataciones/$NEW_CT_ID" "200" "PUT" '{"cargo_rrhh":"Senior QA Engineer"}' "$AUTH_HEADER"
 UPDATED=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['cargo_rrhh'])" 2>/dev/null)
 [ "$UPDATED" = "Senior QA Engineer" ] && pass "Campo actualizado correctamente" || fail "Update no refleja cambio"
 
@@ -218,11 +221,11 @@ UPN=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin
 # ============================================================
 echo -e "\n${YELLOW}[8/10] Reportes${NC}"
 
-check_status "Histórico sin filtros" "$KONG/api/reportes/historico" "200"
+check_status "Histórico sin filtros" "$KONG/api/reportes/historico" "200" "GET" "" "$AUTH_HEADER"
 HIST_TOTAL=$(cat /tmp/e2e_body | python3 -c "import sys,json; print(json.load(sys.stdin)['total'])" 2>/dev/null)
 [ "$HIST_TOTAL" -ge 1 ] && pass "Vista materializada tiene $HIST_TOTAL registros" || fail "Vista vacía"
 
-check_status "Refresh vista materializada" "$KONG/api/reportes/refresh" "200" "POST"
+check_status "Refresh vista materializada" "$KONG/api/reportes/refresh" "200" "POST" "" "$AUTH_HEADER"
 
 # ============================================================
 # 9. CORS

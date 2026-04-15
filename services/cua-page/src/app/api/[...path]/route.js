@@ -1,9 +1,7 @@
 // Proxy API route - replaces Kong for Railway deployment
 // Routes /api/X to the corresponding backend service via private networking
+// SECURITY: Validates paths against whitelist, sanitizes input, adds timeout
 
-// Consolidated for Railway Trial (5 services + PostgreSQL)
-// srv-contratacion also serves /api/reportes
-// adp-gateway serves /api/buk, /api/sap, /api/azure-ad
 const SRV_CONTRATACION = process.env.SRV_CONTRATACION_URL || 'http://localhost:3002';
 const ADP_GATEWAY = process.env.ADP_GATEWAY_URL || 'http://localhost:3005';
 
@@ -17,17 +15,36 @@ const SERVICE_MAP = {
   'azure-ad': ADP_GATEWAY,
 };
 
+// SECURITY: Whitelist of allowed path segments (prevent path traversal)
+const ALLOWED_SERVICES = new Set(Object.keys(SERVICE_MAP));
+const PATH_SEGMENT_REGEX = /^[a-zA-Z0-9\-_]+$/;
+
 function getBackendUrl(path) {
-  // path is like ['auth', 'login'] or ['contrataciones', 'abc-123']
   const service = path[0];
+  if (!ALLOWED_SERVICES.has(service)) return null;
+
+  // Validate each path segment to prevent traversal
+  for (const segment of path) {
+    if (!PATH_SEGMENT_REGEX.test(segment) && !isValidUUID(segment)) return null;
+  }
+
   const backendBase = SERVICE_MAP[service];
-  if (!backendBase) return null;
   const fullPath = '/api/' + path.join('/');
   return backendBase + fullPath;
 }
 
+function isValidUUID(s) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(s);
+}
+
 async function handler(request, { params }) {
   const path = params.path;
+
+  // SECURITY: Limit path depth
+  if (path.length > 5) {
+    return Response.json({ error: 'Path too deep' }, { status: 400 });
+  }
+
   const backendUrl = getBackendUrl(path);
 
   if (!backendUrl) {
@@ -38,13 +55,14 @@ async function handler(request, { params }) {
     const headers = new Headers();
     headers.set('Content-Type', request.headers.get('Content-Type') || 'application/json');
 
-    // Forward auth header
+    // Forward auth header only
     const auth = request.headers.get('Authorization');
     if (auth) headers.set('Authorization', auth);
 
     const fetchOptions = {
       method: request.method,
       headers,
+      signal: AbortSignal.timeout(30000), // 30s timeout
     };
 
     // Forward body for POST/PUT/PATCH
@@ -62,8 +80,9 @@ async function handler(request, { params }) {
       },
     });
   } catch (error) {
-    console.error(`Proxy error for ${backendUrl}:`, error.message);
-    return Response.json({ error: 'Backend service unavailable', detail: error.message }, { status: 502 });
+    console.error(`Proxy error for ${path[0]}:`, error.message);
+    // SECURITY: Don't leak backend URL or error details
+    return Response.json({ error: 'Service unavailable' }, { status: 502 });
   }
 }
 

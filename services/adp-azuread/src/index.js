@@ -4,6 +4,8 @@ const cors = require('cors');
 const axios = require('axios');
 const axiosRetry = require('axios-retry').default;
 const CircuitBreaker = require('opossum');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization'], serializers: { err: pino.stdSerializers.err } });
 
 const app = express();
 const PORT = process.env.PORT || 3007;
@@ -15,8 +17,9 @@ const AZURE_TENANT_ID = process.env.AZURE_TENANT_ID || 'sandbox-tenant';
 const AZURE_CLIENT_ID = process.env.AZURE_CLIENT_ID || 'sandbox-client';
 const AZURE_CLIENT_SECRET = process.env.AZURE_CLIENT_SECRET || 'sandbox-secret';
 
-app.use(cors());
-app.use(express.json());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // ============================================================
 // SHARED: Normalize + UPN generation (used by both modes)
@@ -68,7 +71,7 @@ async function getMSALToken() {
     return msalTokenCache.access_token;
   }
 
-  console.log('[AZURE-AUTH] Requesting MSAL token...');
+  logger.info('[AZURE-AUTH] Requesting MSAL token...');
   const tokenUrl = `${AZURE_AD_URL}/${AZURE_TENANT_ID}/oauth2/v2.0/token`;
   const res = await axios.post(tokenUrl, {
     client_id: AZURE_CLIENT_ID,
@@ -82,7 +85,7 @@ async function getMSALToken() {
     expires_at: Date.now() + (res.data.expires_in - 60) * 1000,
   };
 
-  console.log(`[AZURE-AUTH] MSAL token obtained, expires in ${res.data.expires_in}s`);
+  logger.info(`[AZURE-AUTH] MSAL token obtained, expires in ${res.data.expires_in}s`);
   return msalTokenCache.access_token;
 }
 
@@ -92,7 +95,7 @@ axiosRetry(graphClient, {
   retries: 3,
   retryDelay: axiosRetry.exponentialDelay,
   retryCondition: (error) => axiosRetry.isNetworkOrIdempotentRequestError(error) || (error.response && error.response.status >= 500),
-  onRetry: (retryCount, error) => console.log(`[AZURE-RETRY] Attempt ${retryCount}: ${error.message}`),
+  onRetry: (retryCount, error) => logger.info(`[AZURE-RETRY] Attempt ${retryCount}: ${error.message}`),
 });
 
 const breakerOptions = { timeout: 15000, errorThresholdPercentage: 50, resetTimeout: 30000, name: 'azure-ad-api' };
@@ -130,8 +133,8 @@ async function graphCreateUser(displayName, mailNickname, upn) {
 const validateBreaker = new CircuitBreaker(graphGetUser, breakerOptions);
 const createBreaker = new CircuitBreaker(graphCreateUser, breakerOptions);
 
-validateBreaker.on('open', () => console.log('[AZURE-CIRCUIT] VALIDATE OPEN'));
-createBreaker.on('open', () => console.log('[AZURE-CIRCUIT] CREATE OPEN'));
+validateBreaker.on('open', () => logger.info('[AZURE-CIRCUIT] VALIDATE OPEN'));
+createBreaker.on('open', () => logger.info('[AZURE-CIRCUIT] CREATE OPEN'));
 
 // Real mode UPN generation with Graph API query
 async function generateUpnReal(nombre, apellido) {
@@ -189,7 +192,7 @@ app.post('/api/azure-ad/validar-email', async (req, res) => {
       mock_mode: false,
     });
   } catch (err) {
-    console.error(`[AZURE-ERROR] validar-email: ${err.message}`);
+    logger.error(`[AZURE-ERROR] validar-email: ${err.message}`);
     res.status(503).json({ error: 'Azure AD unavailable', mock_mode: false });
   }
 });
@@ -221,7 +224,7 @@ app.post('/api/azure-ad/crear-cuenta', async (req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error(`[AZURE-ERROR] crear-cuenta: ${err.message}`);
+    logger.error(`[AZURE-ERROR] crear-cuenta: ${err.message}`);
     if (err.response && err.response.status === 409) {
       return res.status(409).json({ error: 'UPN already exists in Azure AD', mock_mode: false });
     }
@@ -244,6 +247,6 @@ app.get('/api/azure-ad/cuentas', async (_req, res) => {
 });
 
 app.listen(PORT, () => {
-  console.log(`adp-azuread running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
-  if (!MOCK_MODE) console.log(`  AZURE_AD_URL: ${AZURE_AD_URL}\n  TENANT: ${AZURE_TENANT_ID}`);
+  logger.info(`adp-azuread running on port ${PORT} (MOCK_MODE=${MOCK_MODE})`);
+  if (!MOCK_MODE) logger.info(`  AZURE_AD_URL: ${AZURE_AD_URL}\n  TENANT: ${AZURE_TENANT_ID}`);
 });

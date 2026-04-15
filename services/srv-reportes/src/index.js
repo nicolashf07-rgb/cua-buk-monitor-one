@@ -2,12 +2,15 @@ require('dotenv').config();
 const express = require('express');
 const cors = require('cors');
 const { Pool } = require('pg');
+const pino = require('pino');
+const logger = pino({ level: process.env.LOG_LEVEL || 'info', redact: ['req.headers.authorization'], serializers: { err: pino.stdSerializers.err } });
 
 const app = express();
 const PORT = process.env.PORT || 3004;
 
-app.use(cors());
-app.use(express.json());
+const ALLOWED_ORIGINS = (process.env.ALLOWED_ORIGINS || 'http://localhost:3000,http://localhost:8000').split(',');
+app.use(cors({ origin: ALLOWED_ORIGINS, credentials: true }));
+app.use(express.json({ limit: '1mb' }));
 
 // PostgreSQL connection
 const pool = new Pool({
@@ -45,7 +48,7 @@ app.get('/api/reportes/historico', async (req, res) => {
       data: result.rows,
     });
   } catch (err) {
-    console.error('Error obteniendo historico:', err);
+    logger.error('Error obteniendo historico:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
@@ -60,11 +63,11 @@ app.post('/api/reportes/refresh', async (_req, res) => {
       timestamp: new Date().toISOString(),
     });
   } catch (err) {
-    console.error('Error refrescando vista materializada:', err);
+    logger.error('Error refrescando vista materializada:', err);
     res.status(500).json({ error: 'Error interno del servidor' });
   }
 });
 
 app.listen(PORT, () => {
-  console.log(`srv-reportes running on port ${PORT}`);
+  logger.info(`srv-reportes running on port ${PORT}`);
 });
